@@ -30,15 +30,10 @@ start_dir = os.getcwd()
 
 houses = []
 for file_path in os.listdir(os.path.join(args.suncg_data_path, 'house')):
-    houses.append(file_path)
-
-def extract_threaded(house):
-    os.chdir(os.path.join(args.suncg_data_path, 'house', house))
-    subprocess.call(
-        shlex.split('%s house.json house.obj' % (os.path.join(
-            args.suncg_toolbox_path, 'gaps', 'bin', 'x86_64', 'scn2scn'), )))
-    print('extracted', house)
+    if not os.path.isfile(os.path.join(args.suncg_data_path, 'house', file_path, "house.obj")):
+        houses.append(file_path)
 
 print(len(houses))
-pool = multiprocessing.Pool(args.num_processes)
-pool.map(extract_threaded, houses)
+with open("blacklist.txt", "w") as f:
+    for house_path in houses:
+        f.write(house_path + "\n")

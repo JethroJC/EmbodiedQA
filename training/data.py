@@ -4,6 +4,7 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
+import random
 import math
 import time
 import h5py
@@ -29,6 +30,12 @@ from models import MultitaskCNN
 
 import pdb
 
+def my_collate(batch):
+    batch = list(filter (lambda x:x is not None, batch))
+    if len(batch)==0:
+        return None
+    else:
+        return default_collate(batch)
 
 def load_vocab(path):
     with open(path, 'r') as f:
@@ -105,13 +112,13 @@ def _dataset_to_tensor(dset, mask=None, dtype=np.int64):
 
 def eqaCollateCnn(batch):
     transposed = list(zip(*batch))
-    idx_batch = default_collate(transposed[0])
-    question_batch = default_collate(transposed[1])
-    answer_batch = default_collate(transposed[2])
-    images_batch = default_collate(transposed[3])
-    actions_in_batch = default_collate(transposed[4])
-    actions_out_batch = default_collate(transposed[5])
-    action_lengths_batch = default_collate(transposed[6])
+    idx_batch = my_collate(transposed[0])
+    question_batch = my_collate(transposed[1])
+    answer_batch = my_collate(transposed[2])
+    images_batch = my_collate(transposed[3])
+    actions_in_batch = my_collate(transposed[4])
+    actions_out_batch = my_collate(transposed[5])
+    action_lengths_batch = my_collate(transposed[6])
     return [
         idx_batch, question_batch, answer_batch, images_batch,
         actions_in_batch, actions_out_batch, action_lengths_batch
@@ -120,14 +127,14 @@ def eqaCollateCnn(batch):
 
 def eqaCollateSeq2seq(batch):
     transposed = list(zip(*batch))
-    idx_batch = default_collate(transposed[0])
-    questions_batch = default_collate(transposed[1])
-    answers_batch = default_collate(transposed[2])
-    images_batch = default_collate(transposed[3])
-    actions_in_batch = default_collate(transposed[4])
-    actions_out_batch = default_collate(transposed[5])
-    action_lengths_batch = default_collate(transposed[6])
-    mask_batch = default_collate(transposed[7])
+    idx_batch = my_collate(transposed[0])
+    questions_batch = my_collate(transposed[1])
+    answers_batch = my_collate(transposed[2])
+    images_batch = my_collate(transposed[3])
+    actions_in_batch = my_collate(transposed[4])
+    actions_out_batch = my_collate(transposed[5])
+    action_lengths_batch = my_collate(transposed[6])
+    mask_batch = my_collate(transposed[7])
 
     return [
         idx_batch, questions_batch, answers_batch, images_batch,
@@ -326,7 +333,7 @@ class EqaDataset(Dataset):
 
     def _clear_api_threads(self):
         for i in range(len(self.api_threads)):
-            del self.api_threads[0]
+            del self.api_threads[i]
         self.api_threads = []
 
     def _check_if_all_envs_loaded(self):
@@ -619,7 +626,6 @@ class EqaDataset(Dataset):
 
         # [NAV] planner-controller
         elif self.input_type in ['pacman']:
-
             index = self.available_idx[index]
 
             idx = self.idx[index]
@@ -657,44 +663,47 @@ class EqaDataset(Dataset):
                     if self.to_cache == True:
                         self.img_data_cache[index] = img_feats
 
-            if self.split in ['val', 'test'
-                              ] or self.target_obj_conn_map_dir != False:
-                target_obj_id, target_room = False, False
-                bbox_obj = [
-                    x for x in self.boxes[index]
-                    if x['type'] == 'object' and x['target'] == True
-                ][0]['box']
-                for obj_id in self.env_loaded[self.env_list[index]].objects:
-                    box2 = self.env_loaded[self.env_list[index]].objects[
-                        obj_id]['bbox']
-                    if all([bbox_obj['min'][x] == box2['min'][x] for x in range(3)]) == True and \
-                        all([bbox_obj['max'][x] == box2['max'][x] for x in range(3)]) == True:
-                        target_obj_id = obj_id
-                        break
-                bbox_room = [
-                    x for x in self.boxes[index]
-                    if x['type'] == 'room' and x['target'] == False
-                ][0]
-                for room in self.env_loaded[self.env_list[
-                        index]].env.house.all_rooms:
-                    if all([room['bbox']['min'][i] == bbox_room['box']['min'][i] for i in range(3)]) and \
-                        all([room['bbox']['max'][i] == bbox_room['box']['max'][i] for i in range(3)]):
-                        target_room = room
-                        break
-                assert target_obj_id != False
-                assert target_room != False
-                self.env_loaded[self.env_list[index]].set_target_object(
-                    self.env_loaded[self.env_list[index]].objects[
-                        target_obj_id], target_room)
+            try:
+                if self.split in ['val', 'test'
+                                  ] or self.target_obj_conn_map_dir != False:
+                    target_obj_id, target_room = False, False
+                    bbox_obj = [
+                        x for x in self.boxes[index]
+                        if x['type'] == 'object' and x['target'] == True
+                    ][0]['box']
+                    for obj_id in self.env_loaded[self.env_list[index]].objects:
+                        box2 = self.env_loaded[self.env_list[index]].objects[
+                            obj_id]['bbox']
+                        if all([bbox_obj['min'][x] == box2['min'][x] for x in range(3)]) == True and \
+                            all([bbox_obj['max'][x] == box2['max'][x] for x in range(3)]) == True:
+                            target_obj_id = obj_id
+                            break
+                    bbox_room = [
+                        x for x in self.boxes[index]
+                        if x['type'] == 'room' and x['target'] == False
+                    ][0]
+                    for room in self.env_loaded[self.env_list[
+                            index]].env.house.all_rooms:
+                        if all([room['bbox']['min'][i] == bbox_room['box']['min'][i] for i in range(3)]) and \
+                            all([room['bbox']['max'][i] == bbox_room['box']['max'][i] for i in range(3)]):
+                            target_room = room
+                            break
+                    assert target_obj_id != False
+                    assert target_room != False
+                    self.env_loaded[self.env_list[index]].set_target_object(
+                        self.env_loaded[self.env_list[index]].objects[
+                            target_obj_id], target_room)
 
-                # [NOTE] only works for batch size = 1
-                self.episode_pos_queue = self.pos_queue[index]
-                self.episode_house = self.env_loaded[self.env_list[index]]
-                self.target_room = target_room
-                self.target_obj = self.env_loaded[self.env_list[
-                    index]].objects[target_obj_id]
+                    # [NOTE] only works for batch size = 1
+                    self.episode_pos_queue = self.pos_queue[index]
+                    self.episode_house = self.env_loaded[self.env_list[index]]
+                    self.target_room = target_room
+                    self.target_obj = self.env_loaded[self.env_list[
+                        index]].objects[target_obj_id]
 
-                return (idx, question, answer, actions, action_length)
+                    return (idx, question, answer, actions, action_length)
+            except:
+                return None
 
             planner_pos_queue_idx = self.planner_pos_queue_idx[index]
             controller_pos_queue_idx = self.controller_pos_queue_idx[index]
@@ -802,8 +811,9 @@ class EqaDataLoader(DataLoader):
                 to_cache=to_cache,
                 target_obj_conn_map_dir=target_obj_conn_map_dir,
                 map_resolution=map_resolution)
-
         super(EqaDataLoader, self).__init__(self.dataset, **kwargs)
+        self.collate_fn = my_collate
+
 
     def close(self):
         pass

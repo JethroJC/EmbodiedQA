@@ -30,7 +30,8 @@ start_dir = os.getcwd()
 
 houses = []
 for file_path in os.listdir(os.path.join(args.suncg_data_path, 'house')):
-    houses.append(file_path)
+    if not os.path.isfile(os.path.join(args.suncg_data_path, 'house', file_path, "house.obj")):
+        houses.append(file_path)
 
 def extract_threaded(house):
     os.chdir(os.path.join(args.suncg_data_path, 'house', house))

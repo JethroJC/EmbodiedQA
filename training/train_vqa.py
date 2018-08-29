@@ -187,6 +187,19 @@ def train(rank, args, shared_model):
         'to_cache': args.to_cache
     }
 
+    eval_loader_kwargs = {
+        'questions_h5': getattr(args, args.eval_split + '_h5'),
+        'data_json': args.data_json,
+        'vocab': args.vocab_json,
+        'batch_size': 1,
+        'input_type': args.input_type,
+        'num_frames': args.num_frames,
+        'split': args.eval_split,
+        'max_threads_per_gpu': args.max_threads_per_gpu,
+        'gpu_id': args.gpus[rank%len(args.gpus)],
+        'to_cache': args.to_cache
+    }
+
     args.output_log_path = os.path.join(args.log_dir,
                                         'train_' + str(rank) + '.json')
 
@@ -196,13 +209,14 @@ def train(rank, args, shared_model):
         metric_names=['loss', 'accuracy', 'mean_rank', 'mean_reciprocal_rank'],
         log_json=args.output_log_path)
 
+    eval_loader = EqaDataLoader(**eval_loader_kwargs)
     train_loader = EqaDataLoader(**train_loader_kwargs)
     if args.input_type == 'ques,image':
         train_loader.dataset._load_envs(start_idx=0, in_order=True)
 
     print('train_loader has %d samples' % len(train_loader.dataset))
 
-    t, epoch = 0, 0
+    t, epoch, best_eval_acc = 0, 0, 0
 
     while epoch < int(args.max_epochs):
 
@@ -270,8 +284,8 @@ def train(rank, args, shared_model):
                     optim.zero_grad()
 
                     # update metrics
-                    accuracy, ranks = metrics.compute_ranks(scores.data.cpu(), answers)
-                    metrics.update([loss.data[0], accuracy, ranks, 1.0 / ranks])
+                    # accuracy, ranks = metrics.compute_ranks(scores.data.cpu(), answers)
+                    # metrics.update([loss.data[0], accuracy, ranks, 1.0 / ranks])
 
                     # backprop and update
                     loss.backward()
@@ -279,10 +293,10 @@ def train(rank, args, shared_model):
                     ensure_shared_grads(model.cpu(), shared_model)
                     optim.step()
 
-                    if t % args.print_every == 0:
-                        print(metrics.get_stat_string())
-                        if args.to_log == 1:
-                            metrics.dump_log()
+                    #if t % args.print_every == 0:
+                    #    print(metrics.get_stat_string())
+                    #    if args.to_log == 1:
+                    #        metrics.dump_log()
 
                 if all_envs_loaded == False:
                     train_loader.dataset._load_envs(in_order=True)
@@ -291,7 +305,73 @@ def train(rank, args, shared_model):
                 else:
                     done = True
 
+            env_done = False
+            env_all_envs_loaded = eval_loader.dataset._check_if_all_envs_loaded()
+
+            while env_done == False:
+                _loss, _accuracy, _ranks = None, None, None
+                for batch in eval_loader:
+                    t += 1
+
+                    model.cuda()
+
+                    idx, questions, answers, images, _, _, _ = batch
+
+                    questions_var = Variable(questions.cuda())
+                    answers_var = Variable(answers.cuda())
+                    images_var = Variable(images.cuda())
+
+                    scores, att_probs = model(images_var, questions_var)
+                    loss = lossFn(scores, answers_var)
+
+                    # update metrics
+                    accuracy, ranks = metrics.compute_ranks(
+                        scores.data.cpu(), answers)
+
+                if _loss is None:
+                    _loss = loss.data[0]
+                    _accuracy = accuracy
+                    _ranks = ranks
+                else:
+                    _loss = torch.cat([_loss, loss.data[0]])
+                    _accuracy = torch.cat([_accuracy, accuracy])
+                    _ranks = torch.cat([_ranks, ranks])
+                
+                metrics.update(
+                    [loss.data[0], accuracy, ranks, 1.0 / ranks])
+
+                print(metrics.get_stat_string(mode=0))
+
+                if env_all_envs_loaded == False:
+                    eval_loader.dataset._load_envs()
+                    if len(eval_loader.dataset.pruned_env_set) == 0:
+                        env_done = True
+                else:
+                    env_done = True
+
         epoch += 1
+
+        # checkpoint if best val accuracy
+        if metrics.metrics[1][0] > best_eval_acc:
+            best_eval_acc = metrics.metrics[1][0]
+            if epoch % args.eval_every == 0 and args.to_log == 1:
+                metrics.dump_log()
+
+                model_state = get_state(model)
+
+                if args.checkpoint_path != False:
+                    ad = checkpoint['args']
+                else:
+                    ad = args.__dict__
+
+                checkpoint = {'args': ad, 'state': model_state, 'epoch': epoch}
+
+                checkpoint_path = '%s/epoch_%d_accuracy_%.04f.pt' % (
+                    args.checkpoint_dir, epoch, best_eval_acc)
+                print('Saving checkpoint to %s' % checkpoint_path)
+                torch.save(checkpoint, checkpoint_path)
+
+        print('[best_eval_accuracy:%.04f]' % best_eval_acc)
 
 
 if __name__ == '__main__':
